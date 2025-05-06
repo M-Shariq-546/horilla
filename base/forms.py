@@ -450,7 +450,7 @@ class CompanyForm(ModelForm):
 
         model = Company
         fields = "__all__"
-        excluded_fields = ["date_format", "time_format", "is_active"]
+        exclude = ["date_format", "time_format", "is_active"]
 
     def validate_image(self, file):
         max_size = 5 * 1024 * 1024
@@ -2390,6 +2390,9 @@ class AnnouncementForm(ModelForm):
         self.fields["attachments"] = MultipleFileField(label=_("Attachments"))
         self.fields["attachments"].required = False
         self.fields["description"].required = False
+        self.fields["disable_comments"].widget.attrs.update(
+            {"hx-on:click": "togglePublicComments()"}
+        )
 
     def save(self, commit: bool = ...) -> Any:
         attachement = []

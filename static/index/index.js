@@ -209,6 +209,8 @@ function toggleReimbursmentType(element) {
             .parent()
             .hide()
             .attr("required", false);
+        // #819
+        $("#objectCreateModalTarget [name=employee_id]").trigger("change");
     } else if (element.val() == "bonus_encashment") {
         $("#objectCreateModalTarget [name=attachment]").parent().hide();
         $("#objectCreateModalTarget [name=attachment]").attr("required", false);
@@ -429,6 +431,28 @@ function handleHtmxTarget(event, path, verb) {
     return hxTarget;
 }
 
+function hxConfirm(element, messageText) {
+    Swal.fire({
+        html: messageText,
+        icon: "question",
+        showCancelButton: true,
+        confirmButtonColor: "#008000",
+        cancelButtonColor: "#d33",
+        confirmButtonText: "Confirm",
+        cancelButtonText: "Cancel",
+        reverseButtons: true,
+    }).then((result) => {
+        if (result.isConfirmed) {
+            htmx.trigger(element, 'confirmed');
+        }
+        else {
+            element.checked = false
+            return false
+        }
+
+    });
+}
+
 function handleDownloadAndRefresh(event, url) {
     // Use in import_popup.html file
     event.preventDefault();
@@ -554,27 +578,28 @@ window.confirm = function (message) {
             });
             if (event.target.tagName.toLowerCase() === "form") {
                 if (path && verb) {
-                    if (verb === "post") {
-                        htmx.ajax("POST", path, {
-                            target: hxTarget,
-                            swap: hxSwap,
-                            values: hxVals,
-                        }).then((response) => {
-                            ajaxWithResponseHandler(event);
-                        });
-                    } else {
-                        htmx.ajax("GET", path, {
-                            target: hxTarget,
-                            swap: hxSwap,
-                            values: hxVals,
-                        }).then((response) => {
-                            ajaxWithResponseHandler(event);
-                        });
-                    }
+                    // Collect all form values
+                    const formData = new FormData(event.target);
+                    const values = {};
+                    formData.forEach((value, key) => {
+                        values[key] = value;
+                    });
+
+                    // Merge with hx-vals, if any
+                    Object.assign(values, hxVals);
+
+                    htmx.ajax(verb.toUpperCase(), path, {
+                        target: hxTarget,
+                        swap: hxSwap,
+                        values: values,
+                    }).then((response) => {
+                        ajaxWithResponseHandler(event);
+                    });
                 } else {
-                    event.target.submit();
+                    event.target.submit();  // fallback
                 }
-            } else if (event.target.tagName.toLowerCase() === "a") {
+            }
+            else if (event.target.tagName.toLowerCase() === "a") {
                 if (event.target.href) {
                     window.location.href = event.target.href;
                 } else {

@@ -14,6 +14,7 @@ provide the main entry points for interacting with the application's functionali
 import contextlib
 import json
 import logging
+import os
 import random
 import secrets
 from urllib.parse import parse_qs
@@ -22,6 +23,7 @@ from django import template
 from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.models import User
+from django.core.files.base import ContentFile
 from django.core.mail import EmailMessage, send_mail
 from django.core.paginator import Paginator
 from django.db.models import ProtectedError
@@ -52,6 +54,7 @@ from horilla.decorators import (
     permission_required,
 )
 from horilla.group_by import group_by_queryset as general_group_by
+from horilla_documents.models import Document
 from notifications.signals import notify
 from onboarding.decorators import (
     all_manager_can_enter,
@@ -421,14 +424,14 @@ def candidate_update(request, obj_id):
 
 
 @login_required
-@permission_required("recruitment.delete_candidate")
+@permission_required("onboarding.delete_onboardingcandidate")
 def candidate_delete(request, obj_id):
     """
     function used to delete hired candidates .
 
     Parameters:
     request (HttpRequest): The HTTP request object.
-    obj_id : recruitment id
+    obj_id : candidate id
 
     Returns:
     GET : return candidate view
@@ -520,7 +523,7 @@ def paginator_qry(qryset, page_number):
 
 
 @login_required
-@permission_required(perm="recruitment.view_candidate")
+@permission_required(perm="onboarding.view_onboardingcandidate")
 def candidates_view(request):
     """
     function used to view hired candidates .
@@ -581,7 +584,7 @@ def hired_candidate_view(request):
 
 @login_required
 @hx_request_required
-@permission_required(perm="recruitment.view_candidate")
+@permission_required(perm="onboarding.view_onboardingcandidate")
 def candidate_filter(request):
     """
     function used to filter hired candidates .
@@ -780,7 +783,7 @@ def onboarding_query_grouper(request, queryset):
 
 
 @login_required
-@all_manager_can_enter("onboarding.view_candidatestage")
+@all_manager_can_enter("onboarding.view_onboardingstage")
 def onboarding_view(request):
     """
     function used to view onboarding main view.
@@ -794,7 +797,7 @@ def onboarding_view(request):
     filter_obj = RecruitmentFilter(request.GET)
     # is active filteration not providing on pipeline
     recruitments = filter_obj.qs
-    if not request.user.has_perm("onboarding.view_candidatestage"):
+    if not request.user.has_perm("onboarding.view_onboardingstage"):
         recruitments = recruitments.filter(
             is_active=True, recruitment_managers__in=[request.user.employee_get]
         ) | recruitments.filter(
@@ -841,7 +844,7 @@ def onboarding_view(request):
 
 
 @login_required
-@all_manager_can_enter("onboarding.view_candidatestage")
+@all_manager_can_enter("onboarding.view_onboardingstage")
 def kanban_view(request):
     # filter_obj = RecruitmentFilter(request.GET)
     # # is active filteration not providing on pipeline
@@ -849,7 +852,7 @@ def kanban_view(request):
     filter_obj = RecruitmentFilter(request.GET)
     # is active filteration not providing on pipeline
     recruitments = filter_obj.qs
-    if not request.user.has_perm("onboarding.view_candidatestage"):
+    if not request.user.has_perm("onboarding.view_onboardingstage"):
         recruitments = recruitments.filter(
             is_active=True, recruitment_managers__in=[request.user.employee_get]
         ) | recruitments.filter(
@@ -1055,21 +1058,39 @@ def employee_creation(request, token):
             employee_personal_info = form.save(commit=False)
             employee_personal_info.employee_user_id = user
             employee_personal_info.email = candidate.email
-            employee_personal_info.employee_profile = onboarding_portal.profile
+            if candidate.profile:  # 896
+                filename = os.path.basename(candidate.profile.name)
+                employee_personal_info.employee_profile.save(
+                    filename, ContentFile(candidate.profile.read()), save=False
+                )
+
             employee_personal_info.is_from_onboarding = True
             employee_personal_info.save()
-            job_position = onboarding_portal.candidate_id.job_position_id
-            existing_work_info = EmployeeWorkInformation.objects.filter(
+
+            EmployeeWorkInformation.objects.update_or_create(
                 employee_id=employee_personal_info,
-            ).first()
-            work_info = (
-                existing_work_info if existing_work_info else EmployeeWorkInformation()
+                defaults={
+                    "department_id": candidate.job_position_id.department_id,
+                    "job_position_id": candidate.job_position_id,
+                    "company_id": candidate.recruitment_id.company_id,
+                    "date_joining": candidate.joining_date,
+                    "email": candidate.email,
+                },
             )
-            work_info.employee_id = employee_personal_info
-            work_info.job_position_id = job_position
-            work_info.date_joining = candidate.joining_date
-            work_info.email = candidate.email
-            work_info.save()
+
+            Document.objects.bulk_create(
+                [
+                    Document(
+                        title=doc.title,
+                        employee_id=employee_personal_info,
+                        document=doc.document,
+                        status=doc.status,
+                        reject_reason=doc.reject_reason,
+                    )
+                    for doc in candidate.candidatedocument_set.all()
+                ]
+            )
+
             onboarding_portal.count = 3
             onboarding_portal.save()
             messages.success(

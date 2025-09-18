@@ -34,7 +34,7 @@ from base.models import (
 from employee.methods.duration_methods import format_time, strtime_seconds
 from horilla import horilla_middlewares
 from horilla.methods import get_horilla_model_class
-from horilla.models import HorillaModel
+from horilla.models import HorillaModel, has_xss, upload_path
 from horilla_audit.methods import get_diff
 from horilla_audit.models import HorillaAuditInfo, HorillaAuditLog
 
@@ -78,9 +78,7 @@ class Employee(models.Model):
     employee_last_name = models.CharField(
         max_length=200, null=True, blank=True, verbose_name=_("Last Name")
     )
-    employee_profile = models.ImageField(
-        upload_to="employee/profile", null=True, blank=True
-    )
+    employee_profile = models.ImageField(upload_to=upload_path, null=True, blank=True)
     email = models.EmailField(max_length=254, unique=True)
     phone = models.CharField(
         max_length=25,
@@ -114,6 +112,26 @@ class Employee(models.Model):
     objects = HorillaCompanyManager(
         related_company_field="employee_work_info__company_id"
     )
+
+    def clean_fields(self, exclude=None):
+        errors = {}
+
+        # Get the list of fields to exclude from validation
+        total_exclude = set(exclude or []).union(getattr(self, "xss_exempt_fields", []))
+
+        for field in self._meta.get_fields():
+            if (
+                isinstance(field, (models.CharField, models.TextField))
+                and field.name not in total_exclude
+            ):
+                value = getattr(self, field.name, None)
+                if value and has_xss(value):
+                    errors[field.name] = ValidationError(
+                        "Potential XSS content detected."
+                    )
+
+        if errors:
+            raise ValidationError(errors)
 
     def get_image(self):
         """
@@ -732,6 +750,10 @@ class EmployeeBankDetails(HorillaModel):
         related_company_field="employee_id__employee_work_info__company_id"
     )
 
+    class Meta:
+        verbose_name = _("Employee Bank Details")
+        verbose_name_plural = _("Employee Bank Details")
+
     def __str__(self) -> str:
         return f"{self.employee_id}-{self.bank_name}"
 
@@ -751,7 +773,7 @@ class EmployeeBankDetails(HorillaModel):
 
 
 class NoteFiles(HorillaModel):
-    files = models.FileField(upload_to="employee/NoteFiles", blank=True, null=True)
+    files = models.FileField(upload_to=upload_path, blank=True, null=True)
     objects = models.Manager()
 
     def __str__(self):
@@ -768,9 +790,7 @@ class EmployeeNote(HorillaModel):
         on_delete=models.CASCADE,
         related_name="employee_name",
     )
-    description = models.TextField(
-        verbose_name=_("Description"), max_length=255, null=True
-    )
+    description = models.TextField(verbose_name=_("Description"), null=True)  # 905
     note_files = models.ManyToManyField(NoteFiles, blank=True)
     updated_by = models.ForeignKey(Employee, on_delete=models.CASCADE)
     objects = HorillaCompanyManager(
@@ -786,7 +806,7 @@ class PolicyMultipleFile(HorillaModel):
     PoliciesMultipleFile model
     """
 
-    attachment = models.FileField(upload_to="employee/policies")
+    attachment = models.FileField(upload_to=upload_path)
 
 
 class Policy(HorillaModel):
@@ -802,6 +822,10 @@ class Policy(HorillaModel):
     company_id = models.ManyToManyField(Company, blank=True, verbose_name=_("Company"))
 
     objects = HorillaCompanyManager("company_id")
+
+    class Meta:
+        verbose_name = _("Policy")
+        verbose_name_plural = _("Policies")
 
     def delete(self, *args, **kwargs):
         super().delete(*args, **kwargs)
@@ -914,9 +938,7 @@ class DisciplinaryAction(HorillaModel):
         validators=[validate_time_format],
     )
     start_date = models.DateField(null=True)
-    attachment = models.FileField(
-        upload_to="employee/discipline", null=True, blank=True
-    )
+    attachment = models.FileField(upload_to=upload_path, null=True, blank=True)
     objects = HorillaCompanyManager("employee_id__employee_work_info__company_id")
 
     def __str__(self) -> str:

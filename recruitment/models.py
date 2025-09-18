@@ -8,27 +8,22 @@ This module is used to register models for recruitment app
 import json
 import os
 import re
-from datetime import date
 from uuid import uuid4
 
 import django
 import requests
 from django import forms
-from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.files.storage import default_storage
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
-from django.db.models.signals import m2m_changed, post_save
-from django.dispatch import receiver
-from django.http import JsonResponse
-from django.urls import reverse_lazy
+from django.utils.text import slugify
 from django.utils.translation import gettext_lazy as _
 
 from base.horilla_company_manager import HorillaCompanyManager
 from base.models import Company, JobPosition
 from employee.models import Employee
-from horilla.models import HorillaModel
+from horilla.models import HorillaModel, upload_path
 from horilla_audit.methods import get_diff
 from horilla_audit.models import HorillaAuditInfo, HorillaAuditLog
 from horilla_views.cbv_methods import render_template
@@ -95,6 +90,10 @@ class SurveyTemplate(HorillaModel):
     def __str__(self) -> str:
         return self.title
 
+    class Meta:
+        verbose_name = _("Survey Template")
+        verbose_name_plural = _("Survey Templates")
+
 
 class Skill(HorillaModel):
     title = models.CharField(max_length=100)
@@ -107,14 +106,20 @@ class Skill(HorillaModel):
         self.title = title.capitalize()
         super().save(*args, **kwargs)
 
+    class Meta:
+        verbose_name = _("Skill")
+        verbose_name_plural = _("Skills")
+
 
 class Recruitment(HorillaModel):
     """
     Recruitment model
     """
 
-    title = models.CharField(max_length=50, null=True, blank=True)
-    description = models.TextField(null=True)
+    title = models.CharField(
+        max_length=50, null=True, blank=True, verbose_name=_("Title")
+    )
+    description = models.TextField(null=True, verbose_name=_("Description"))
     is_event_based = models.BooleanField(
         default=False,
         help_text=_("To start recruitment for multiple job positions"),
@@ -124,6 +129,7 @@ class Recruitment(HorillaModel):
         help_text=_(
             "To close the recruitment, If closed then not visible on pipeline view."
         ),
+        verbose_name=_("Closed"),
     )
     is_published = models.BooleanField(
         default=True,
@@ -131,16 +137,13 @@ class Recruitment(HorillaModel):
             "To publish a recruitment in website, if false then it \
             will not appear on open recruitment page."
         ),
-    )
-    is_active = models.BooleanField(
-        default=True,
-        help_text=_(
-            "To archive and un-archive a recruitment, if active is false then it \
-            will not appear on recruitment list view."
-        ),
+        verbose_name=_("Is Published"),
     )
     open_positions = models.ManyToManyField(
-        JobPosition, related_name="open_positions", blank=True
+        JobPosition,
+        related_name="open_positions",
+        blank=True,
+        verbose_name=_("Job Position"),
     )
     job_position_id = models.ForeignKey(
         JobPosition,
@@ -152,9 +155,11 @@ class Recruitment(HorillaModel):
         verbose_name=_("Job Position"),
         editable=False,
     )
-    vacancy = models.IntegerField(default=0, null=True)
-    recruitment_managers = models.ManyToManyField(Employee)
-    survey_templates = models.ManyToManyField(SurveyTemplate, blank=True)
+    vacancy = models.IntegerField(default=0, null=True, verbose_name=_("Vacancy"))
+    recruitment_managers = models.ManyToManyField(Employee, verbose_name=_("Managers"))
+    survey_templates = models.ManyToManyField(
+        SurveyTemplate, blank=True, verbose_name=_("Survey Templates")
+    )
     company_id = models.ForeignKey(
         Company,
         on_delete=models.PROTECT,
@@ -162,9 +167,11 @@ class Recruitment(HorillaModel):
         blank=True,
         verbose_name=_("Company"),
     )
-    start_date = models.DateField(default=django.utils.timezone.now)
-    end_date = models.DateField(blank=True, null=True)
-    skills = models.ManyToManyField(Skill, blank=True)
+    start_date = models.DateField(
+        default=django.utils.timezone.now, verbose_name=_("Start Date")
+    )
+    end_date = models.DateField(blank=True, null=True, verbose_name=_("End Date"))
+    skills = models.ManyToManyField(Skill, blank=True, verbose_name=_("Skills"))
     linkedin_account_id = models.ForeignKey(
         "recruitment.LinkedInAccount",
         on_delete=models.PROTECT,
@@ -179,14 +186,19 @@ class Recruitment(HorillaModel):
             "To publish a recruitment in Linkedin, if active is false then it \
             will not post on LinkedIn."
         ),
+        verbose_name=_("Post on LinkedIn"),
     )
     objects = HorillaCompanyManager()
     default = models.manager.Manager()
     optional_profile_image = models.BooleanField(
-        default=False, help_text=_("Profile image not mandatory for candidate creation")
+        default=False,
+        help_text=_("Profile image not mandatory for candidate creation"),
+        verbose_name=_("Optional Profile Image"),
     )
     optional_resume = models.BooleanField(
-        default=False, help_text=_("Resume not mandatory for candidate creation")
+        default=False,
+        help_text=_("Resume not mandatory for candidate creation"),
+        verbose_name=_("Optional Resume"),
     )
 
     class Meta:
@@ -202,6 +214,8 @@ class Recruitment(HorillaModel):
             ("job_position_id", "start_date", "company_id"),
         ]
         permissions = (("archive_recruitment", "Archive Recruitment"),)
+        verbose_name = _("Recruitment")
+        verbose_name_plural = _("Recruitments")
 
     def total_hires(self):
         """
@@ -287,10 +301,13 @@ class Stage(HorillaModel):
         related_name="stage_set",
         verbose_name=_("Recruitment"),
     )
-    stage_managers = models.ManyToManyField(Employee)
-    stage = models.CharField(max_length=50)
+    stage_managers = models.ManyToManyField(Employee, verbose_name=_("Stage Managers"))
+    stage = models.CharField(max_length=50, verbose_name=_("Stage"))
     stage_type = models.CharField(
-        max_length=20, choices=stage_types, default="interview"
+        max_length=20,
+        choices=stage_types,
+        default="interview",
+        verbose_name=_("Stage Type"),
     )
     sequence = models.IntegerField(null=True, default=0)
     objects = HorillaCompanyManager(related_company_field="recruitment_id__company_id")
@@ -306,6 +323,11 @@ class Stage(HorillaModel):
         permissions = (("archive_Stage", "Archive Stage"),)
         unique_together = ["recruitment_id", "stage"]
         ordering = ["sequence"]
+        verbose_name = _("Stage")
+        verbose_name_plural = _("Stages")
+
+    def __str__(self):
+        return f"{self.stage} - ({self.recruitment_id.title})"
 
     def active_candidates(self):
         """
@@ -318,6 +340,16 @@ class Stage(HorillaModel):
         }
 
 
+def candidate_upload_path(instance, filename):
+    """
+    Generates a unique file path for candidate profile & resume uploads.
+    """
+    ext = filename.split(".")[-1]
+    name_slug = slugify(instance.name) or "candidate"
+    unique_filename = f"{name_slug}-{uuid4().hex[:8]}.{ext}"
+    return f"recruitment/{name_slug}/{unique_filename}"
+
+
 class Candidate(HorillaModel):
     """
     Candidate model
@@ -325,11 +357,11 @@ class Candidate(HorillaModel):
 
     choices = [("male", _("Male")), ("female", _("Female")), ("other", _("Other"))]
     offer_letter_statuses = [
-        ("not_sent", "Not Sent"),
-        ("sent", "Sent"),
-        ("accepted", "Accepted"),
-        ("rejected", "Rejected"),
-        ("joined", "Joined"),
+        ("not_sent", _("Not Sent")),
+        ("sent", _("Sent")),
+        ("accepted", _("Accepted")),
+        ("rejected", _("Rejected")),
+        ("joined", _("Joined")),
     ]
     source_choices = [
         ("application", _("Application Form")),
@@ -337,7 +369,7 @@ class Candidate(HorillaModel):
         ("other", _("Other")),
     ]
     name = models.CharField(max_length=100, null=True, verbose_name=_("Name"))
-    profile = models.ImageField(upload_to=candidate_photo_upload_path, null=True)
+    profile = models.ImageField(upload_to=upload_path, null=True)  # 853
     portfolio = models.URLField(max_length=200, blank=True)
     recruitment_id = models.ForeignKey(
         Recruitment,
@@ -377,10 +409,10 @@ class Candidate(HorillaModel):
         validators=[
             validate_mobile,
         ],
-        verbose_name=_("Phone"),
+        verbose_name=_("Mobile"),
     )
     resume = models.FileField(
-        upload_to="recruitment/resume",
+        upload_to=upload_path,  # 853
         validators=[
             validate_pdf,
         ],
@@ -444,6 +476,7 @@ class Candidate(HorillaModel):
         choices=offer_letter_statuses,
         default="not_sent",
         editable=False,
+        verbose_name=_("Offer Letter Status"),
     )
     objects = HorillaCompanyManager(related_company_field="recruitment_id__company_id")
     last_updated = models.DateField(null=True, auto_now=True)
@@ -537,7 +570,8 @@ class Candidate(HorillaModel):
 
     def get_interview(self):
         """
-        This method is used to get the interview dates and times for the candidate for the mail templates
+        This method is used to get the interview dates and times
+        for the candidate for the mail templates
         """
 
         interviews = InterviewSchedule.objects.filter(candidate_id=self.id)
@@ -614,6 +648,8 @@ class Candidate(HorillaModel):
             ("archive_candidate", "Archive Candidate"),
         )
         ordering = ["sequence"]
+        verbose_name = _("Candidate")
+        verbose_name_plural = _("Candidates")
 
 
 class RejectReason(HorillaModel):
@@ -636,6 +672,10 @@ class RejectReason(HorillaModel):
 
     def __str__(self) -> str:
         return self.title
+
+    class Meta:
+        verbose_name = _("Reject Reason")
+        verbose_name_plural = _("Reject Reasons")
 
 
 class RejectedCandidate(HorillaModel):
@@ -663,12 +703,17 @@ class RejectedCandidate(HorillaModel):
         ],
     )
 
+    class Meta:
+        verbose_name = _("Rejected Candidate")
+        verbose_name_plural = _("Rejected Candidates")
+
     def __str__(self) -> str:
-        return super().__str__()
+        reasons = ", ".join(self.reject_reason_id.values_list("title", flat=True))
+        return f"{self.candidate_id} - {reasons if reasons else 'No Reason'}"
 
 
 class StageFiles(HorillaModel):
-    files = models.FileField(upload_to="recruitment/stageFiles", blank=True, null=True)
+    files = models.FileField(upload_to=upload_path, blank=True, null=True)
 
     def __str__(self):
         return self.files.name.split("/")[-1]
@@ -680,7 +725,7 @@ class StageNote(HorillaModel):
     """
 
     candidate_id = models.ForeignKey(Candidate, on_delete=models.CASCADE)
-    description = models.TextField(verbose_name=_("Description"), max_length=255)
+    description = models.TextField(verbose_name=_("Description"))  # 905
     stage_id = models.ForeignKey(Stage, on_delete=models.CASCADE)
     stage_files = models.ManyToManyField(StageFiles, blank=True)
     updated_by = models.ForeignKey(
@@ -796,9 +841,7 @@ class RecruitmentSurveyAnswer(HorillaModel):
         null=True,
     )
     answer_json = models.JSONField()
-    attachment = models.FileField(
-        upload_to="recruitment_attachment", null=True, blank=True
-    )
+    attachment = models.FileField(upload_to=upload_path, null=True, blank=True)
     objects = HorillaCompanyManager(related_company_field="recruitment_id__company_id")
 
     @property
@@ -942,7 +985,8 @@ class InterviewSchedule(HorillaModel):
     interview_date = models.DateField(verbose_name=_("Interview Date"))
     interview_time = models.TimeField(verbose_name=_("Interview Time"))
     description = models.TextField(
-        verbose_name=_("Description"), blank=True, max_length=255
+        verbose_name=_("Description"),
+        blank=True,
     )
     completed = models.BooleanField(
         default=False, verbose_name=_("Is Interview Completed")
@@ -952,10 +996,14 @@ class InterviewSchedule(HorillaModel):
     def __str__(self) -> str:
         return f"{self.candidate_id} -Interview."
 
+    class Meta:
+        verbose_name = _("Schedule Interview")
+        verbose_name_plural = _("Schedule Interviews")
+
 
 class Resume(models.Model):
     file = models.FileField(
-        upload_to="recruitment/resume",
+        upload_to=upload_path,
         validators=[
             validate_pdf,
         ],
@@ -1009,7 +1057,7 @@ class CandidateDocument(HorillaModel):
     document_request_id = models.ForeignKey(
         CandidateDocumentRequest, on_delete=models.PROTECT, null=True
     )
-    document = models.FileField(upload_to="candidate/documents", null=True)
+    document = models.FileField(upload_to=upload_path, null=True)
     status = models.CharField(choices=STATUS, max_length=10, default="requested")
     reject_reason = models.TextField(blank=True, null=True, max_length=255)
 
@@ -1042,11 +1090,17 @@ class CandidateDocument(HorillaModel):
 
 
 class LinkedInAccount(HorillaModel):
-    username = models.CharField(max_length=250, verbose_name="Username")
+    username = models.CharField(max_length=250, verbose_name=_("App Name"))
     email = models.EmailField(max_length=254, verbose_name=_("Email"))
-    api_token = models.CharField(max_length=500, verbose_name="API Token")
+    api_token = models.CharField(max_length=500, verbose_name=_("API Token"))
     sub_id = models.CharField(max_length=250, unique=True)
-    company_id = models.ForeignKey(Company, on_delete=models.CASCADE, null=True)
+    company_id = models.ForeignKey(
+        Company, on_delete=models.CASCADE, null=True, verbose_name=_("Company")
+    )
+
+    class Meta:
+        verbose_name = _("LinkedIn Account")
+        verbose_name_plural = _("LinkedIn Accounts")
 
     def __str__(self):
         return str(self.username)

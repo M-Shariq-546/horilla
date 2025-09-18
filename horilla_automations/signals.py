@@ -406,14 +406,19 @@ def send_mail(request, automation, instance):
     cc = cc_emails
 
     email_backend = ConfiguredEmailBackend()
-    display_email_name = email_backend.dynamic_from_email_with_display_name
-    if request:
+    default_email = email_backend.dynamic_from_email_with_display_name
+
+    from_email = default_email
+    reply_to = [default_email]
+
+    if request and hasattr(request, "user") and hasattr(request.user, "employee_get"):
         try:
-            display_email_name = f"{request.user.employee_get.get_full_name()} <{request.user.employee_get.email}>"
+            user = request.user.employee_get
+            display_email_name = f"{user.get_full_name()} <{user.email}>"
             from_email = display_email_name
             reply_to = [display_email_name]
-        except:
-            logger.error(Exception)
+        except Exception as e:
+            logger.error(f"Error generating user-based email display name: {e}")
 
     if pk_or_text and request and to_emails:
         attachments = []
@@ -498,17 +503,17 @@ def send_mail(request, automation, instance):
                 f"Automation <Notification> {automation.title} is triggered by {request.user.employee_get}"
             )
 
-        if automation.delivary_channel != "notification":
+        if automation.delivery_channel != "notification":
             thread = threading.Thread(
                 target=lambda: _send_mail(email),
             )
             thread.start()
 
-        if automation.delivary_channel != "email":
+        if automation.delivery_channel != "email":
             thread = threading.Thread(
                 target=lambda: _send_notification(plain_text),
             )
             thread.start()
         logger.info(
-            f"Automation Triggered | {automation.get_delivary_channel_display()} | {automation}"
+            f"Automation Triggered | {automation.get_delivery_channel_display()} | {automation}"
         )

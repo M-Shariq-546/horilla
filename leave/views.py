@@ -60,6 +60,7 @@ from leave.methods import (
     company_leave_dates_list,
     filter_conditional_leave_request,
     holiday_dates_list,
+    parse_excel_date,
 )
 from leave.models import *
 from leave.models import leave_requested_dates
@@ -398,21 +399,32 @@ def leave_request_creation(request, type_id=None, emp_id=None):
         if "confirm" in request_copy:
             request_copy.pop("confirm")
         previous_data = request_copy.urlencode()
+
     form = LeaveRequestCreationForm()
     if request:
-        employee = request.user.employee_get
+        employee_qs = form.fields["employee_id"].queryset
+        post_emp_id = request.POST.get("employee_id")
+        employee = employee_qs.filter(id=post_emp_id).first() or (
+            request.user.employee_get
+            if request.user.employee_get in employee_qs
+            else employee_qs.first()
+        )
+
         if employee:
-            available_leaves = employee.available_leave.all()
-            assigned_leave_types = LeaveType.objects.filter(
-                id__in=available_leaves.values_list("leave_type_id", flat=True)
+            leave_type_ids = employee.available_leave.values_list(
+                "leave_type_id", flat=True
             )
+            assigned_leave_types = LeaveType.objects.filter(id__in=leave_type_ids)
+
             form.fields["leave_type_id"].queryset = assigned_leave_types
+
     if type_id and emp_id:
         initial_data = {
             "leave_type_id": type_id,
             "employee_id": emp_id,
         }
         form = LeaveRequestCreationForm(initial=initial_data)
+
     form = choosesubordinates(request, form, "leave.add_leaverequest")
     if request.method == "POST":
         form = LeaveRequestCreationForm(request.POST, request.FILES)
@@ -886,30 +898,8 @@ def leave_request_filter(request):
 def leave_request_update(request, id):
     """
     function used to update leave request.
-
-    Parameters:
-    request (HttpRequest): The HTTP request object.
-    id : leave request id
-
-    Returns:
-    GET : return leave request update template
-    POST : return leave request view
     """
     leave_request = LeaveRequest.objects.get(id=id)
-    leave_type_id = leave_request.leave_type_id
-    employee = leave_request.employee_id
-    form = LeaveRequestUpdationForm(instance=leave_request)
-    if employee:
-        available_leaves = employee.available_leave.all()
-        assigned_leave_types = LeaveType.objects.filter(
-            id__in=available_leaves.values_list("leave_type_id", flat=True)
-        )
-        if leave_type_id not in assigned_leave_types.values_list("id", flat=True):
-            assigned_leave_types = assigned_leave_types | LeaveType.objects.filter(
-                id=leave_type_id.id
-            )
-        form.fields["leave_type_id"].queryset = assigned_leave_types
-    form = choosesubordinates(request, form, "leave.add_leaverequest")
     if request.method == "POST":
         form = LeaveRequestUpdationForm(
             request.POST, request.FILES, instance=leave_request
@@ -943,6 +933,9 @@ def leave_request_update(request, id):
                     response.content.decode("utf-8")
                     + "<script>location.reload();</script>"
                 )
+    else:
+        form = LeaveRequestUpdationForm(instance=leave_request)
+        form = choosesubordinates(request, form, "leave.add_leaverequest")
 
     return render(
         request,
@@ -1784,6 +1777,10 @@ def assign_leave_type_excel(_request):
         columns = [
             "Employee Badge ID",
             "Leave Type",
+            "Available Days",  # 779
+            "Carryforward Days",
+            "Total Leave Days",
+            "Assigned Date",
         ]
         data_frame = pd.DataFrame(columns=columns)
         response = HttpResponse(content_type="application/ms-excel")
@@ -1809,9 +1806,9 @@ def assign_leave_type_import(request):
         "Leave Type": [],
         "Badge ID Error": [],
         "Leave Type Error": [],
-        "Assigned Error": [],
         "Available Days": [],
         "Carry Forward Days": [],
+        "Assigned Date Error": [],
         "Other Errors": [],
     }
 
@@ -1825,62 +1822,77 @@ def assign_leave_type_import(request):
             emp.badge_id.lower(): emp for emp in Employee.objects.all() if emp.badge_id
         }
         leave_types = {lt.name.lower(): lt for lt in LeaveType.objects.all()}
-        available_leaves = {
+        existing = {
             (al.leave_type_id.id, al.employee_id.id): al
             for al in AvailableLeave.objects.all()
         }
 
-        assign_leave_list = []
-        error_list = []
+        assign_leave_list, error_list = [], []
 
-        for assign_leave in assign_leave_dicts:
-            badge_id = assign_leave.get("Employee Badge ID", "").strip().lower()
-            assign_leave_type = assign_leave.get("Leave Type", "").strip().lower()
-            available_days = assign_leave.get("Available Days", "0")
-            cfd = assign_leave.get("Carry Forward Days", "0")
+        for row in assign_leave_dicts:
+            badge_id = str(row.get("Employee Badge ID", "")).strip().lower()
+            leave_type_name = str(row.get("Leave Type", "")).strip().lower()
             employee = employees.get(badge_id)
-            leave_type = leave_types.get(assign_leave_type)
+            leave_type = leave_types.get(leave_type_name)
 
-            errors = []
-            if employee is None:
-                errors.append(_("This badge id does not exist."))
-            if leave_type is None:
-                errors.append(_("This leave type does not exist."))
-            if errors:
-                assign_leave[
-                    "Badge ID Error" if "badge id" in errors[0] else "Leave Type Error"
-                ] = " ".join(force_str(error) for error in errors)
-                error_list.append(assign_leave)
+            if not employee:
+                row["Badge ID Error"] = _("This badge id does not exist.")
+                error_list.append(row)
+                continue
+            if not leave_type:
+                row["Leave Type Error"] = _("This leave type does not exist.")
+                error_list.append(row)
                 continue
 
-            # Check if leave type has already been assigned to the employee
-            if (leave_type.id, employee.id) in available_leaves:
-                assign_leave["Assigned Error"] = _(
+            if (leave_type.id, employee.id) in existing:
+                row["Assigned Error"] = _(
                     "Leave type has already been assigned to the employee."
                 )
-                error_list.append(assign_leave)
+                error_list.append(row)
                 continue
 
-            # If no errors, create the AvailableLeave instance
-            if available_days == 0:
+            # Extract optional fields # 779
+            available_days = row.get("Available Days")
+            carryforward_days = row.get("Carryforward Days")
+            total_leave_days = row.get("Total Leave Days")
+            assigned_date_raw = row.get("Assigned Date")
+
+            # Apply defaults when missing
+            if pd.isna(available_days) or available_days == "":
                 available_days = leave_type.total_days
+            if pd.isna(carryforward_days) or carryforward_days == "":
+                carryforward_days = 0
+            if pd.isna(total_leave_days) or total_leave_days == "":
+                total_leave_days = available_days + carryforward_days
+
+            assigned_date = parse_excel_date(assigned_date_raw) or (
+                timezone.now().date()
+                if isinstance(assigned_date_raw, float)
+                and math.isnan(assigned_date_raw)
+                else None
+            )
+            if not assigned_date:
+                row["Other Errors"] = _(
+                    "Invalid date format. Please use YYYY-MM-DD or a supported format."
+                )
+                error_list.append(row)
+                continue
 
             available_leave = AvailableLeave(
                 leave_type_id=leave_type,
                 employee_id=employee,
-                available_days=available_days,
+                available_days=float(available_days),
+                carryforward_days=float(carryforward_days),
+                total_leave_days=float(total_leave_days),
+                assigned_date=assigned_date,
             )
-            if cfd:
-                available_leave.carryforward_days = cfd
+            if carryforward_days:
                 available_leave.expired_date = leave_type.carryforward_expire_date
                 try:
                     available_leave.reset_date = leave_type.leave_type_next_reset_date()
-                except:
+                except Exception:
                     pass
-                available_leave.assigned_date = datetime.today()
-                available_leave.total_leave_days = (
-                    available_leave.carryforward_days + available_leave.available_days
-                )
+
             assign_leave_list.append(available_leave)
 
         # Bulk create available leaves
@@ -3913,49 +3925,59 @@ def user_request_select_filter(request):
 @hx_request_required
 def employee_available_leave_count(request):
     leave_type_id = request.GET.get("leave_type_id")
+    hx_target = request.META.get("HTTP_HX_TARGET")
     start_date_str = request.GET.get("start_date")
+
     try:
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
-    except:
-        leave_type_id = None
-    hx_target = request.META.get("HTTP_HX_TARGET", None)
-    employee_id = (
-        request.GET.getlist("employee_id")[0]
-        if request.GET.getlist("employee_id")
-        else None
-    )
-    available_leave = (
-        AvailableLeave.objects.filter(
-            leave_type_id=leave_type_id, employee_id=employee_id
-        ).first()
-        if leave_type_id and employee_id
-        else None
-    )
-    total_leave_days = available_leave.total_leave_days if available_leave else 0
-    forcasted_days = 0
+    except (ValueError, TypeError):
+        start_date = None
 
-    if (
-        available_leave
-        and available_leave.leave_type_id.leave_type_next_reset_date()
-        and start_date >= available_leave.leave_type_id.leave_type_next_reset_date()
-    ):
-        forcasted_days = available_leave.forcasted_leaves(start_date)
-        total_leave_days = (
-            available_leave.leave_type_id.carryforward_max
-            if available_leave.leave_type_id.carryforward_type
-            in ["carryforward", "carryforward expire"]
-            and available_leave.leave_type_id.carryforward_max < total_leave_days
-            else total_leave_days
+    if not leave_type_id or not start_date:
+        return render(
+            request,
+            "leave/leave_request/employee_available_leave_count.html",
+            {"hx_target": hx_target},
         )
-        if available_leave.leave_type_id.carryforward_type == "no carryforward":
-            total_leave_days = 0
-        total_leave_days += forcasted_days
 
-    print(datetime.today().date())
-    pending_requests = available_leave.employee_id.leaverequest_set.filter(
-        status="requested", leave_type_id=leave_type_id
-    ).exclude(start_date__lt=datetime.today().date())
-    pending_requests_days = pending_requests.count()
+    employee_id = request.GET.getlist("employee_id")
+    employee_id = employee_id[0] if employee_id else None
+
+    available_leave = (
+        AvailableLeave.objects.select_related("leave_type_id", "employee_id")
+        .filter(leave_type_id=leave_type_id, employee_id=employee_id)
+        .first()
+    )
+
+    total_leave_days = 0
+    forcasted_days = 0
+    pending_requests_days = 0
+
+    if available_leave:
+        leave_type = available_leave.leave_type_id
+        total_leave_days = available_leave.total_leave_days
+
+        next_reset = leave_type.leave_type_next_reset_date()
+        if next_reset and start_date >= next_reset:
+            forcasted_days = available_leave.forcasted_leaves(start_date)
+
+            if leave_type.carryforward_type == "no carryforward":
+                total_leave_days = 0
+            elif (
+                leave_type.carryforward_type in ["carryforward", "carryforward expire"]
+                and leave_type.carryforward_max < total_leave_days
+            ):
+                total_leave_days = leave_type.carryforward_max
+
+            total_leave_days += forcasted_days
+
+        # Only query pending requests if we have a valid employee
+        if available_leave.employee_id_id:
+            pending_requests_days = available_leave.employee_id.leaverequest_set.filter(
+                status="requested",
+                leave_type_id=leave_type_id,
+                start_date__gte=datetime.today().date(),
+            ).count()
 
     context = {
         "hx_target": hx_target,

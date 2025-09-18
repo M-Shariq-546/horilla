@@ -8,7 +8,7 @@ import uuid
 import django_filters
 from django import forms
 from django.utils.translation import gettext as __
-from django_filters import CharFilter, DateFilter, FilterSet, NumberFilter, filters
+from django_filters import CharFilter, DateFilter, filters
 
 from base.models import (
     CompanyLeaves,
@@ -330,6 +330,12 @@ class HolidayFilter(FilterSet):
         super().__init__(data=data, queryset=queryset, request=request, prefix=prefix)
         for field in self.form.fields.keys():
             self.form.fields[field].widget.attrs["id"] = f"{uuid.uuid4()}"
+        self.form.fields["from_date"].label = (
+            f"{self.Meta.model()._meta.get_field('start_date').verbose_name} From"
+        )
+        self.form.fields["to_date"].label = (
+            f"{self.Meta.model()._meta.get_field('end_date').verbose_name} Till"
+        )
 
 
 class CompanyLeaveFilter(FilterSet):

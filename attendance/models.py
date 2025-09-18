@@ -32,7 +32,7 @@ from base.methods import is_company_leave, is_holiday
 from base.models import Company, EmployeeShift, EmployeeShiftDay, WorkType
 from employee.models import Employee
 from horilla.methods import get_horilla_model_class
-from horilla.models import HorillaModel
+from horilla.models import HorillaModel, upload_path
 from horilla_audit.models import HorillaAuditInfo, HorillaAuditLog
 
 # to skip the migration issue with the old migrations
@@ -145,7 +145,7 @@ class Attendance(HorillaModel):
         WorkType,
         null=True,
         blank=True,
-        on_delete=models.DO_NOTHING,
+        on_delete=models.SET_NULL,  # 796
         verbose_name=_("Work Type"),
     )
     attendance_day = models.ForeignKey(
@@ -575,7 +575,7 @@ class Attendance(HorillaModel):
 
 
 class AttendanceRequestFile(HorillaModel):
-    file = models.FileField(upload_to="attendance/request_files")
+    file = models.FileField(upload_to=upload_path)
 
 
 class AttendanceRequestComment(HorillaModel):
@@ -944,7 +944,7 @@ class WorkRecords(models.Model):
     ]
 
     record_name = models.CharField(max_length=250, null=True, blank=True)
-    work_record_type = models.CharField(max_length=5, null=True, choices=choices)
+    work_record_type = models.CharField(max_length=10, null=True, choices=choices)
     employee_id = models.ForeignKey(
         Employee, on_delete=models.CASCADE, verbose_name=_("Employee")
     )
@@ -956,8 +956,8 @@ class WorkRecords(models.Model):
             validate_time_format,
         ],
         default="00:00",
-        max_length=5,
-    )
+        max_length=10,
+    )  # 841
     min_hour = models.CharField(
         null=True,
         blank=True,
@@ -965,7 +965,7 @@ class WorkRecords(models.Model):
             validate_time_format,
         ],
         default="00:00",
-        max_length=5,
+        max_length=10,
     )
     at_work_second = models.IntegerField(null=True, blank=True, default=0)
     min_hour_second = models.IntegerField(null=True, blank=True, default=0)

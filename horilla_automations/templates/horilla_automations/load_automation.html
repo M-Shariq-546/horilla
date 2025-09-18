@@ -6,7 +6,7 @@
     </button>
 </div>
 <div class="oh-modal__dialog-body">
-    <div class="oh-card">
+    <div class="oh-card" style="overflow-y: auto;max-height: 70vh;">
         <form hx-post="{{request.path}}" hx-target="#genericModalBody">
             {% csrf_token %}
             <div
@@ -40,15 +40,15 @@
                             {{automation.template_body|safe}}
                         </div>
                         <ul class="oh-faq__tags m-0">
-                            {% if automation.fields.delivary_channel == 'email' %}
+                            {% if automation.fields.delivery_channel == 'email' %}
                             <li class="oh-faq__tag text-light bg-primary">
                                 {% trans "Email" %}
                             </li>
-                            {% elif automation.fields.delivary_channel == 'notification' %}
+                            {% elif automation.fields.delivery_channel == 'notification' %}
                             <li class="oh-faq__tag text-light bg-danger">
                                 {% trans "Notification" %}
                             </li>
-                            {% elif automation.fields.delivary_channel == 'both' %}
+                            {% elif automation.fields.delivery_channel == 'both' %}
                             <li class="oh-faq__tag text-light bg-primary">
                                 {% trans "Email" %}
                             </li>

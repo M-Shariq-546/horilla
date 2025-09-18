@@ -15,6 +15,7 @@ from django.conf import settings
 from django.contrib.auth.context_processors import PermWrapper
 from django.db.models.utils import AltersData
 from django.template.defaultfilters import register
+from django.utils.translation import gettext_lazy as _
 
 from horilla.config import import_method
 from horilla.horilla_middlewares import _thread_locals
@@ -22,7 +23,7 @@ from horilla.horilla_middlewares import _thread_locals
 register = template.Library()
 
 
-numeric_test = re.compile(r'^\d+$')
+numeric_test = re.compile(r"^\d+$")
 
 date_format_mapping = {
     "DD-MM-YYYY": "%d-%m-%Y",
@@ -48,11 +49,11 @@ time_format_mapping = {
 def selected_format(date: datetime.date, company: object = None) -> str:
     if company and (company.date_format or company.time_format):
         if isinstance(date, datetime.date):
-            format = company.date_format
+            format = company.date_format if company.date_format else "MMM. D, YYYY"
             date_format_mapping.get(format)
             return date.strftime(date_format_mapping[format])
         elif isinstance(date, datetime.time):
-            format = company.time_format
+            format = company.time_format if company.time_format else "hh:mm A"
             return date.strftime(time_format_mapping[format])
     return date
 
@@ -81,6 +82,10 @@ def getattribute(value, attr: str):
         else:
             return getattr(value, attr, "")
 
+    # Python code we need raw bool values, not "Yes"/"No"
+    # if isinstance(result, bool):
+    #     return _("Yes") if result else _("No")
+
     return result
 
 
@@ -100,7 +105,15 @@ def format(string: str, instance: object):
         attr_name: str = attr_placeholder
         attrs = attr_name.split("__")
         for attr in attrs:
-            value = getattr(instance, attr, "")
+            if (
+                attr.startswith("get_")
+                and attr.endswith("_display")
+                and callable(getattr(instance, attr, None))
+            ):  # 874
+                value = getattr(instance, attr)()
+            else:
+                value = getattr(instance, attr, "")
+
             if isinstance(value, types.MethodType):
                 value = value()
             instance = value
@@ -150,3 +163,11 @@ def get_id(string: str):
     Generate target/id for the generic delete summary
     """
     return string.split("-")[0].lower().replace(" ", "")
+
+
+@register.filter
+def is_image_file(filename):
+    """
+    Django template filter to check if a given filename is an image file.
+    """
+    return filename.lower().endswith((".png", ".jpg", ".jpeg", ".svg"))

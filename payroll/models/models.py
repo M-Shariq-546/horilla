@@ -30,7 +30,7 @@ from base.models import (
 from employee.methods.duration_methods import strtime_seconds
 from employee.models import BonusPoint, Employee, EmployeeWorkInformation
 from horilla import horilla_middlewares
-from horilla.models import HorillaModel
+from horilla.models import HorillaModel, upload_path
 from horilla_audit.models import HorillaAuditInfo, HorillaAuditLog
 
 logger = logging.getLogger(__name__)
@@ -113,6 +113,8 @@ class FilingStatus(HorillaModel):
 
     class Meta:
         ordering = ["-id"]
+        verbose_name = _("Filing Status")
+        verbose_name_plural = _("Filing Statuses")
 
 
 class Contract(HorillaModel):
@@ -240,7 +242,7 @@ class Contract(HorillaModel):
         validators=[min_zero],
         verbose_name=_("Notice Period"),
     )
-    contract_document = models.FileField(upload_to="uploads/", null=True, blank=True)
+    contract_document = models.FileField(upload_to=upload_path, null=True, blank=True)
     deduct_leave_from_basic_pay = models.BooleanField(
         default=True,
         verbose_name=_("Deduct From Basic Pay"),
@@ -1041,6 +1043,10 @@ class Allowance(HorillaModel):
         return str(self.title)
 
     def save(self):
+        request = getattr(horilla_middlewares._thread_locals, "request", None)
+        selected_company = request.session.get("selected_company")
+        if not self.id and selected_company and selected_company != "all":
+            self.company_id = Company.find(selected_company)
         super().save()
 
 
@@ -1323,6 +1329,10 @@ class Deduction(HorillaModel):
         return str(self.title)
 
     def save(self):
+        request = getattr(horilla_middlewares._thread_locals, "request", None)
+        selected_company = request.session.get("selected_company")
+        if not self.id and selected_company and selected_company != "all":
+            self.company_id = Company.find(selected_company)
         super().save()
 
 
@@ -1560,7 +1570,7 @@ class ReimbursementMultipleAttachment(models.Model):
     ReimbursementMultipleAttachement Model
     """
 
-    attachment = models.FileField(upload_to="payroll/reimbursements")
+    attachment = models.FileField(upload_to=upload_path)
     objects = models.Manager()
 
 
@@ -1590,7 +1600,7 @@ class Reimbursement(HorillaModel):
         Employee, on_delete=models.PROTECT, verbose_name="Employee"
     )
     allowance_on = models.DateField()
-    attachment = models.FileField(upload_to="payroll/reimbursements", null=True)
+    attachment = models.FileField(upload_to=upload_path, null=True)
     other_attachments = models.ManyToManyField(
         ReimbursementMultipleAttachment, blank=True, editable=False
     )
@@ -1777,7 +1787,7 @@ class Reimbursement(HorillaModel):
 
 
 class ReimbursementFile(models.Model):
-    file = models.FileField(upload_to="payroll/request_files")
+    file = models.FileField(upload_to=upload_path)
     objects = models.Manager()
 
 

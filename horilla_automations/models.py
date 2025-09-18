@@ -38,7 +38,7 @@ class MailAutomation(HorillaModel):
     ]
 
     title = models.CharField(max_length=256, unique=True)
-    method_title = models.CharField(max_length=50, editable=False)
+    method_title = models.CharField(max_length=100, editable=False)
     model = models.CharField(max_length=100, choices=MODEL_CHOICES, null=False)
     mail_to = models.TextField(verbose_name="Mail to/Notify to")
     mail_details = models.CharField(
@@ -59,11 +59,11 @@ class MailAutomation(HorillaModel):
         blank=True,
         verbose_name=_trans("Also Send to"),
     )
-    delivary_channel = models.CharField(
+    delivery_channel = models.CharField(
         default="email",
         max_length=50,
         choices=SEND_OPTIONS,
-        verbose_name=_trans("Choose Delivary Channel"),
+        verbose_name=_trans("Choose Delivery Channel"),
     )
     template_attachments = models.ManyToManyField(
         HorillaMailTemplate,
